@@ -1,0 +1,301 @@
+		struct		hostent *he;
+		struct		sockaddr_in their_addr;
+		char		host_name[64];
+		short		port_number;
+		WSADATA		wsaData;
+		int			sockfd;
+
+		char lv_IIMBuffer[1024];
+		char lv_IIMBuffer1[100];
+		char lv_tmp_buff[1024];
+		char lv_header[25],lv_header1[25];
+		int lv_trancode,lv_op_len,lv_trancode1=0,lv_op_len1,lv_struct_size;
+		int ord_type=0;
+		int lv_ret=0;
+		int  lv_server_grp=0;
+
+		lv_server_grp = pv_config.SMem_Group;
+
+		strcpy_s(host_name,64,pv_config.itms_sys_info[pv_itmsid].rim[lv_server_grp].hostname);
+		port_number=pv_config.itms_sys_info[pv_itmsid].rim[lv_server_grp].port;
+
+		char lv_log[512] = {""};
+				
+		/* For creating a client socket for connectinf to FNO_IIM */
+		WSAStartup( 0x0101, &wsaData);/* Winsock compulsary data */
+		
+		//gethostname(hostname,64);						/* Fill socket family details.. */
+		he = gethostbyname(host_name);
+		int lv_scnt=0;
+		struct in_addr addr;
+		if(he->h_addrtype == AF_INET)
+		{
+			while (he->h_addr_list[lv_scnt] != 0) 
+			{
+				addr.s_addr = *(u_long *) he->h_addr_list[lv_scnt++];           
+			} 
+		}
+		their_addr.sin_family = AF_INET;
+		their_addr.sin_port   = htons(port_number);
+		their_addr.sin_addr   = addr;//*((struct in_addr*)he->h_addr);
+
+		/* Create Socket */
+		if((sockfd = socket(AF_INET,SOCK_STREAM,0)) ==-1)
+		{
+			//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+			strcpy_s(err_msg,128,"Unable to process request, Insufficient System resource.");
+			return 1200;
+		}
+		time_t lv_temp_start;
+		time (&lv_temp_start);
+		time_t lv_temp_end;
+
+
+		/* Connect to Server */
+		if(connect(sockfd,(struct sockaddr *)&their_addr,sizeof(struct sockaddr))!=0)	
+		{
+			//inputError("Connection Error","RIM MODULE NOT AVAILABLE");
+			strcpy_s(err_msg,128,"RIM MODULE NOT AVAILABLE");
+			/*sprintf_s(lv_log, "Client:%s, ITMSId:%d, Server:%s, Port:%d, ServerGrp:%d", client_id, pv_itmsid,host_name, port_number, lv_server_grp);
+			write_debug_log("krms",lv_log);*/
+			closesocket(sockfd);
+			WSACleanup();
+			return 1201;
+		}
+		if(TIMEOUT_LOG_FLAG)
+		{
+			time (&lv_temp_end);
+			if((lv_temp_end - lv_temp_start)>2)
+			{
+				sprintf_s(lv_log,512,"LPS: After connect [%ld]",(lv_temp_end - lv_temp_start));
+				//write_keat_log(pv_userid, lv_log, pv_config.keat_log_path);
+				write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+			}
+		}
+		if (type == 1)
+		{
+			STS_LT_REQUEST_LIMITS lv_limits;
+			memset(&lv_limits, 0, sizeof(STS_LT_REQUEST_LIMITS));
+			
+			strcpy_s(lv_limits.branchid,BRANCH_SIZE,branch);
+			strcpy_s(lv_limits.client_groupid,ORD_CLIENT_GP_SIZE,client_gp);
+			strcpy_s(lv_limits.login_type,LOGIN_TYPE_SIZE," ");
+			lv_struct_size=sizeof(STS_LT_REQUEST_LIMITS);
+
+			if(RECV_msg( sockfd, lv_IIMBuffer1, &lv_trancode,&lv_op_len) < 0)
+			{
+				//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+				strcpy_s(err_msg,128,"Unable to process request, Recieveing Limits info from server failed.");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1203;
+			}
+
+			if (lv_trancode == RIM_READYTO_PROCESS_ORDERS)
+			{
+				ord_type=121;
+				sprintf_s(lv_header,25,"%d,%d",ord_type,lv_struct_size+12);
+				sprintf_s(lv_header1,25,"%-12s",lv_header);
+				strcpy_s(lv_IIMBuffer,1024,lv_header1);
+
+				memcpy(lv_tmp_buff,&lv_limits,lv_struct_size);
+				memcpy(lv_IIMBuffer+12,lv_tmp_buff,lv_struct_size);
+				/*
+				if(send(sockfd,lv_IIMBuffer,lv_struct_size+12,0)==-1)
+				{
+					strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+					closesocket(sockfd);
+					WSACleanup();
+					return 1203;
+				}*/
+				
+				if(TIMEOUT_LOG_FLAG)
+				{
+					time (&lv_temp_end);
+					if((lv_temp_end - lv_temp_start)>2)
+					{
+						sprintf_s(lv_log,512,"LPS: RIM_READYTO_PROCESS_ORDERS [%ld]",(lv_temp_end - lv_temp_start));
+						write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+					}
+				}
+				if(send_msg(sockfd,lv_IIMBuffer, lv_struct_size+12) != 0)
+				{
+					//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+					strcpy_s(err_msg,128,"Unable to process request, Sending Limits request to server failed.");
+					closesocket(sockfd);
+					WSACleanup();
+					return 1203;
+				}
+				if(TIMEOUT_LOG_FLAG)
+				{
+					time (&lv_temp_end);
+					if((lv_temp_end - lv_temp_start)>2)
+					{
+						sprintf_s(lv_log,512,"LPS: After send message [%ld]",(lv_temp_end - lv_temp_start));
+						write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+					}
+				}
+				/* Get Return Status */
+
+				if(RECV_Response( sockfd, 1, &lv_trancode1,&lv_op_len1) < 0)
+				{
+					//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+					strcpy_s(err_msg,128,"Unable to process request, Recieveing Limits response from server failed.");
+					closesocket(sockfd);
+					WSACleanup();
+					return 1203;
+				}
+
+				if(TIMEOUT_LOG_FLAG)
+				{
+					time (&lv_temp_end);
+					if((lv_temp_end - lv_temp_start)>2)
+					{
+						sprintf_s(lv_log,512,"LPS: After RECV_Response [%ld]",(lv_temp_end - lv_temp_start));
+						write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+					}
+				}
+
+				if (lv_op_len1 == 12)
+				{
+					strcpy_s(err_msg,128,"Unable to process request, Invalid Limits Info recieved from Server.");
+					closesocket(sockfd);
+					WSACleanup();
+					return 1203;
+				}
+				
+				sprintf_s(lv_header,25,"%d,%d",999,18);
+				sprintf_s(lv_header1,25,"%-12s%s",lv_header,"LOGOUT");
+
+				/*if(send(sockfd,lv_header1,18,0)==-1)
+				{
+					strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+					closesocket(sockfd);
+					WSACleanup();
+					return 1203;
+				}*/
+
+				//if(send_msg(sockfd,lv_header1,18) != 0)
+				//{
+				//	//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+				//	strcpy_s(err_msg,128,"Unable to process Limits request, sending request to server failed.");
+				//	closesocket(sockfd);
+				//	WSACleanup();
+				//	return 1203;
+				//}
+				
+				//send logout request and do not wait for response
+
+				if(TIMEOUT_LOG_FLAG)
+				{
+					time (&lv_temp_end);
+					if((lv_temp_end - lv_temp_start)>2)
+					{
+						sprintf_s(lv_log,512,"LPS: Before  Send LOGOUT  [%ld]",(lv_temp_end - lv_temp_start));
+						write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+					}
+				}
+				send_msg(sockfd,lv_header1,18);
+
+				if(TIMEOUT_LOG_FLAG)
+				{
+					time (&lv_temp_end);
+					if((lv_temp_end - lv_temp_start)>2)
+					{
+						sprintf_s(lv_log,512,"LPS: After  Send LOGOUT  [%ld]",(lv_temp_end - lv_temp_start));
+						write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+					}
+				}
+				closesocket(sockfd);
+				WSACleanup();
+				
+				if (lv_trancode1 == 122)
+				{					
+					*rows = 1;
+					strcpy_s(err_msg,128,"Success");
+
+					if(TIMEOUT_LOG_FLAG)
+					{
+						time (&lv_temp_end);
+						if((lv_temp_end - lv_temp_start)>2)
+						{
+							sprintf_s(lv_log,512,"LPS: Display Success: [%ld]",(lv_temp_end - lv_temp_start));
+							write_keat_log(KEAT_LOG_OUT,KRMS,pv_userid, lv_log, pv_config.keat_log_path);
+						}
+					}
+					return 0;
+				}
+				else
+				{
+					//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+					sprintf_s(err_msg,128,"Unable to process request, Invalid Limits data [%d] recieved from server.",lv_trancode1);
+					return 1203;
+				}
+				
+			}
+			else if (lv_trancode == RIM_LPS_DOWN)
+			{
+				strcpy_s(err_msg,128,"RIM LPS Down");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_LPS_CONNECTION_DOWN)
+			{
+				strcpy_s(err_msg,128,"RIM Connectivity to LPS Down");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_CONNECTION_TIMEOUT)
+			{
+				strcpy_s(err_msg,128,"RIM Connectivity to LPS timeout");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_CONFIRMATION_TIMEOUT)
+			{
+				strcpy_s(err_msg,128,"RIM confirmation to LPS timeout");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_REQUEST_TO_LPS_FAILED)
+			{
+				strcpy_s(err_msg,128,"Rms request to LPS failed");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_LPS_CLT_M2M_PROCESS)
+			{
+				strcpy_s(err_msg,128,"M2M process is currently executed. Kindly try again after some time.");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_LPS_SQR_M2M_PROCESS)
+			{
+				strcpy_s(err_msg,128,"Squareoff M2M process is currently executed. Kindly try again after some time.");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else if (lv_trancode == RIM_LPS_VAL_M2M_PROCESS)
+			{
+				strcpy_s(err_msg,128,"Valuation M2M process is currently executed. Kindly try again after some time.");
+				closesocket(sockfd);
+				WSACleanup();
+				return 1204;
+			}
+			else 
+			{
+				//strcpy_s(err_msg,128,"Connection Error, Please Try Again...");
+				sprintf_s(err_msg,128,"Unable to process request, Invalid Limits response [%d] recieved from server.",lv_trancode1);
+				closesocket(sockfd);
+				WSACleanup();
+				return 1203;
+			}
+
+		}
